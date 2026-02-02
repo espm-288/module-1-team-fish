@@ -40,7 +40,7 @@ duckdbfs::duckdb_secrets(
     endpoint = "s3.amazonaws.com",
     region = "us-west-2"
 )
-s3_url <- "s3://us-west-2.opendata.source.coop/youssef-harby/exiobase-3/4588235/parquet/**"
+s3_url <- "s3://us-west-2.opendata.source.coop/youssef-harby/exiobase-3/4588235/parquet/year=*/format=ixi/matrix=F_impacts/**"
 
 # Open the dataset lazily
 exio <- open_dataset(s3_url)
@@ -61,3 +61,19 @@ exio |>
 ```
 
 > **Task**: Construct a query to find the top 5 sectors in the US by CO2 emissions in 2022. Remember to check the column names in `exio` to find the appropriate emissions flow.
+
+```{r}
+#a query written based on the task above, used the chatbot and the info provide in the glimpse. schema problem was in the initial url
+
+exio |>
+  distinct(stressor) |>
+  collect()
+
+
+exio |>
+  filter(year == 2022, region == "US") |>
+  group_by(sector) |>
+  summarize(total_co2 = sum(.data$value, na.rm = TRUE), .groups = "drop") |>
+  slice_max(order_by = total_co2, n = 5) |>
+  collect()
+```
