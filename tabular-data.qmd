@@ -60,7 +60,8 @@ exio |>
     collect()
 ```
 
-> **Task**: Construct a query to find the top 5 sectors in the US by CO2 emissions in 2022. Remember to check the column names in `exio` to find the appropriate emissions flow.
+> **Task**
+: Construct a query to find the top 5 sectors in the US by CO2 emissions in 2022. Remember to check the column names in `exio` to find the appropriate emissions flow.
 
 ```{r}
 #a query written based on the task above, used the chatbot and the info provide in the glimpse. schema problem was in the initial url
@@ -76,4 +77,167 @@ exio |>
   summarize(total_co2 = sum(.data$value, na.rm = TRUE), .groups = "drop") |>
   slice_max(order_by = total_co2, n = 5) |>
   collect()
+```
+
+## Visualization: Top 10 Sectors by CO2 Emissions
+
+```{r}
+library(ggplot2)
+
+# Get top 10 sectors by CO2 emissions
+top10_sectors <- exio |>
+  filter(year == 2022, region == "US") |>
+  group_by(sector) |>
+  summarize(total_co2 = sum(.data$value, na.rm = TRUE), .groups = "drop") |>
+  slice_max(order_by = total_co2, n = 10) |>
+  collect()
+
+# Create the visualization
+p <- ggplot(top10_sectors, aes(x = reorder(sector, total_co2), y = total_co2)) +
+  geom_col(fill = "#FF10F0") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Sectors by CO2 Emissions in the US (2022)",
+    x = "Sector",
+    y = "Total CO2 Emissions"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))
+
+# Display the plot
+print(p)
+
+# Export the visualization
+ggsave("top10_sectors_co2.png", plot = p, width = 10, height = 6, dpi = 300)
+```
+
+## Forecasting: Predicting CO2 Emissions by Country (2050-2055) Using MARSS
+
+```{r}
+
+#this has got some problems, predictions not working. Maybe not a good fit for time series data? predicting too far in advance given that the og data is a short time period?
+library(tidyr)
+library(purrr)
+library(MARSS)
+
+# Get historical CO2 emissions by country and year
+historical_data <- exio |>
+  group_by(region, year) |>
+  summarize(total_co2 = sum(.data$value, na.rm = TRUE), .groups = "drop") |>
+  collect() |>
+  arrange(region, year)
+
+# Check data structure
+cat("Number of regions:", length(unique(historical_data$region)), "\n")
+cat("Year range:", min(historical_data$year), "to", max(historical_data$year), "\n")
+
+# Function to forecast using MARSS for a single country
+forecast_country_marss <- function(region_name, country_data) {
+  cat("Processing:", region_name, "\n")
+  
+  tryCatch({
+    # Prepare time series data - needs to be a matrix
+    ts_data <- matrix(country_data$total_co2, nrow = 1)
+    
+    # Simple univariate MARSS model
+    model_list <- list(
+      B = matrix(1),  # Random walk
+      U = matrix(0),  # No drift
+      Q = matrix("q"),  # Process variance
+      Z = matrix(1),  # Observation model
+      A = matrix(0),  # No offset
+      R = matrix("r")  # Observation variance
+    )
+    
+    # Fit MARSS model
+    fit <- MARSS(ts_data, model = model_list, silent = TRUE)
+    
+    # Get the last state estimate
+    last_state <- fit$states[, ncol(fit$states)]
+    
+    # Simple projection: use the estimated trend from the model
+    # Get parameter estimates
+    B_est <- coef(fit, type = "matrix")$B
+    
+    # Project forward 33 years (2023-2055)
+    n_ahead <- 33
+    predictions <- numeric(n_ahead)
+    current_state <- last_state
+    
+    for (i in 1:n_ahead) {
+      current_state <- B_est * current_state
+      predictions[i] <- current_state
+    }
+    
+    # Extract predictions for 2050-2055 (years 28-33)
+    predictions_2050_2055 <- predictions[28:33]
+    
+    cat("  Success! Predictions range:", round(min(predictions_2050_2055)), 
+        "to", round(max(predictions_2050_2055)), "\n")
+    
+    data.frame(
+      region = region_name,
+      year = 2050:2055,
+      predicted_co2 = predictions_2050_2055
+    )
+  }, error = function(e) {
+    cat("  Error:", conditionMessage(e), "\n")
+    # Return NULL instead of NA so we can filter it out
+    return(NULL)
+  })
+}
+
+# Apply MARSS forecasting to each country
+cat("\n=== Starting MARSS Forecasting ===\n")
+
+predictions_list <- historical_data |>
+  group_by(region) |>
+  group_split() |>
+  map(function(df) {
+    region_name <- df$region[1]
+    forecast_country_marss(region_name, df)
+  })
+
+# Combine all predictions, removing NULL entries
+predictions_by_country <- bind_rows(predictions_list[!sapply(predictions_list, is.null)])
+
+cat("\n=== Forecasting Complete ===\n")
+cat("Successfully predicted for", length(unique(predictions_by_country$region)), "regions\n\n")
+
+# Calculate average emissions for 2050-2055 by country
+avg_predictions <- predictions_by_country |>
+  group_by(region) |>
+  summarize(avg_co2_2050_2055 = mean(predicted_co2), .groups = "drop") |>
+  arrange(desc(avg_co2_2050_2055))
+
+# Display top 10 countries
+cat("\n=== Top 10 Countries by Predicted Average CO2 (2050-2055) ===\n")
+print(avg_predictions |> head(10))
+
+# Display all predictions
+cat("\n=== All Predictions by Year ===\n")
+print(predictions_by_country |> arrange(region, year))
+
+# Visualize predicted average emissions
+p_forecast <- ggplot(avg_predictions |> head(15), 
+                     aes(x = reorder(region, avg_co2_2050_2055), y = avg_co2_2050_2055)) +
+  geom_col(fill = "#FF10F0") +
+  coord_flip() +
+  labs(
+    title = "Predicted Average CO2 Emissions by Country (2050-2055)",
+    subtitle = "Based on MARSS state-space model from historical data (1995-2022)",
+    x = "Country/Region",
+    y = "Predicted Average CO2 Emissions"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))
+
+# Display the plot
+p_forecast
+
+# Export the forecast visualization
+ggsave("predicted_co2_2050_2055.png", plot = p_forecast, width = 10, height = 6, dpi = 300)
+
+# Export predictions to CSV
+write.csv(avg_predictions, "co2_predictions_2050_2055.csv", row.names = FALSE)
 ```
