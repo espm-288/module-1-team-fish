@@ -1,0 +1,40 @@
+
+```{r}
+library(duckdbfs)
+library(dplyr)
+
+```
+
+```{r}
+# Remote S3 path to EXIOBASE 3 (Source Cooperative)
+
+duckdbfs::duckdb_secrets(
+    key = "",
+    secret = "",
+    endpoint = "s3.amazonaws.com",
+    region = "us-west-2"
+)
+s3_url <- "s3://us-west-2.opendata.source.coop/youssef-harby/exiobase-3/4588235/parquet/year=*"
+
+# Open the dataset lazily
+exio <- open_dataset(s3_url)
+
+# View the schema (column names and types) without reading data
+glimpse(exio)
+```
+
+
+coding in stepwise motion to conceptually track workflow, to make debugging easier. "keeping track"
+
+```{r}
+exio |>
+    distinct(stressor) |>
+    collect()
+```
+
+```{r}
+co2 <- exio |>
+    filter(matrix== "f_matrix")
+
+```
+
