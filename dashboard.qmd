@@ -1,0 +1,190 @@
+---
+title: "CO2 Emissions Explorer"
+author: "Team Fish"
+format:
+  dashboard:
+    theme: cosmo
+    nav-buttons:
+      - icon: github
+        href: https://github.com
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(duckdbfs)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+
+# Connect to EXIOBASE 3 remote data
+duckdbfs::duckdb_secrets(
+  key = "",
+  secret = "",
+  endpoint = "s3.amazonaws.com",
+  region = "us-west-2"
+)
+
+s3_url <- "s3://us-west-2.opendata.source.coop/youssef-harby/exiobase-3/4588235/parquet/year=*/format=ixi/matrix=F_impacts/**"
+
+exio <- open_dataset(s3_url)
+```
+
+# Global Overview
+
+## Row {height=30%}
+
+```{r}
+#| content: valuebox
+#| title: "Regions Covered"
+
+list(
+  value = exio |> distinct(region) |> collect() |> nrow(),
+  icon = "globe",
+  color = "primary"
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Years of Data"
+
+years <- exio |> distinct(year) |> collect() |> pull(year)
+list(
+  value = paste(min(years), "-", max(years)),
+  icon = "calendar-range",
+  color = "info"
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Sectors Tracked"
+
+list(
+  value = exio |> distinct(sector) |> collect() |> nrow(),
+  icon = "building",
+  color = "success"
+)
+```
+
+## Row {height=70%}
+
+### Column {width=60%}
+
+```{r}
+#| title: Global CO2 Emissions Over Time
+
+global_trend <- exio |>
+  group_by(year) |>
+  summarize(total_co2 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  arrange(year) |>
+  collect()
+
+p <- ggplot(global_trend, aes(x = year, y = total_co2)) +
+  geom_line(color = "#2196F3", linewidth = 1.2) +
+  geom_point(color = "#2196F3", size = 2) +
+  labs(x = "Year", y = "Total CO2 Emissions") +
+  theme_minimal()
+
+ggplotly(p)
+```
+
+### Column {width=40%}
+
+```{r}
+#| title: Top 10 Emitting Regions (Latest Year)
+
+latest_year <- max(years)
+
+top_regions <- exio |>
+  filter(year == latest_year) |>
+  group_by(region) |>
+  summarize(total_co2 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  slice_max(order_by = total_co2, n = 10) |>
+  collect()
+
+p2 <- ggplot(top_regions, aes(x = reorder(region, total_co2), y = total_co2)) +
+  geom_col(fill = "#FF7043") +
+  coord_flip() +
+  labs(x = "Region", y = "Total CO2 Emissions") +
+  theme_minimal()
+
+ggplotly(p2)
+```
+
+# By Sector
+
+## Row
+
+### Column {width=50%}
+
+```{r}
+#| title: Top 10 Sectors by CO2 Emissions (US, Latest Year)
+
+top_sectors_us <- exio |>
+  filter(year == latest_year, region == "US") |>
+  group_by(sector) |>
+  summarize(total_co2 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  slice_max(order_by = total_co2, n = 10) |>
+  collect()
+
+p3 <- ggplot(top_sectors_us, aes(x = reorder(sector, total_co2), y = total_co2)) +
+  geom_col(fill = "#AB47BC") +
+  coord_flip() +
+  labs(x = "Sector", y = "CO2 Emissions") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 7))
+
+ggplotly(p3)
+```
+
+### Column {width=50%}
+
+```{r}
+#| title: Sector Emissions Trend (Top 5 US Sectors)
+
+top5_names <- top_sectors_us |> slice_head(n = 5) |> pull(sector)
+
+sector_trend <- exio |>
+  filter(region == "US", sector %in% top5_names) |>
+  group_by(year, sector) |>
+  summarize(total_co2 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  arrange(year) |>
+  collect()
+
+p4 <- ggplot(sector_trend, aes(x = year, y = total_co2, color = sector)) +
+  geom_line(linewidth = 1) +
+  labs(x = "Year", y = "CO2 Emissions", color = "Sector") +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 6))
+
+ggplotly(p4)
+```
+
+# Data Table
+
+## Row
+
+```{r}
+#| title: Emissions Data Explorer
+
+library(DT)
+
+table_data <- exio |>
+  filter(year == latest_year) |>
+  group_by(region, sector) |>
+  summarize(total_co2 = sum(value, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(total_co2)) |>
+  head(200) |>
+  collect()
+
+datatable(
+  table_data,
+  filter = "top",
+  options = list(pageLength = 15, scrollX = TRUE),
+  colnames = c("Region", "Sector", "Total CO2 Emissions")
+)
+```
