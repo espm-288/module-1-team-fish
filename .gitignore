@@ -9,7 +9,7 @@
 .quarto/
 _site/
 _freeze/
-*_files/
+
 
 
 # System files
